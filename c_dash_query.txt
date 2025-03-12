@@ -1,0 +1,92 @@
+Create Table "dev"."c_dashboard"."IDS_final_dataset" AS (
+    SELECT 
+        duration AS cnx_duration
+        ,protocol_type
+        ,service
+        ,tcp_connection_state 
+        ,source_num_bytes
+        ,destination_num_bytes
+        ,'0.0.0.0' AS source_ip_address
+        ,'0.0.0.0' AS destination_ip_address
+        ,0.0 AS source_port
+        ,0.0 AS destination_port
+        ,attack_label AS attack_class_name 
+        ,attack_level AS attack_class_label
+    FROM "dev"."b_transform"."nsl_kdd_transformed"
+    UNION ALL 
+    SELECT
+        dur AS cnx_duration
+        ,proto AS  protocol_type
+        ,service
+        ,state AS tcp_connection_state
+        ,sbytes AS source_num_bytes
+        ,dbytes AS destination_num_bytes
+        ,'0.0.0.0' AS source_ip_address
+        ,'0.0.0.0' AS destination_ip_address
+        ,0.0 AS source_port
+        ,0.0 AS destination_port
+        ,attack_cat AS attack_class_name
+        ,label AS attack_class_label
+    FROM "dev"."b_transform"."unsw_15_transformed"
+    UNION ALL
+    SELECT 
+       duration AS cnx_duration
+       ,protocol_type
+       ,'No_service' AS service
+       ,'No_state' AS tcp_connection_state
+       ,0 AS source_num_bytes
+       ,0 AS destination_num_bytes
+       ,source_ip_address
+       ,destination_ip_address
+       ,source_port
+       ,destination_port
+       ,CASE 
+            WHEN attack_class=1 THEN 'ATTACK'
+            WHEN attack_class=0 THEN 'BENIGN'
+        END AS attack_class_name
+       ,attack_class AS attack_class_label
+    FROM "dev"."b_transform"."network_traffic_attacks_transformed"
+    UNION ALL 
+    SELECT 
+        flow_duration AS cnx_duration
+        ,CASE 
+            WHEN protocol_type=0 THEN 'IPV6_OP'
+            WHEN protocol_type=6 THEN 'TCP'
+            WHEN protocol_type=17 THEN 'UDP'
+        END AS protocol_type
+        ,'No_service' AS service
+        ,'No_state' AS tcp_connection_state
+        ,0 AS source_num_bytes
+        ,0 AS destination_num_bytes
+        ,source_ip_address
+        ,destination_ip_address
+        ,source_port
+        , 0.0 AS destination_port
+        ,attack_class AS attack_class_name
+        ,CASE 
+            WHEN attack_class='BENIGN' THEN 0
+            WHEN attack_class='DDOS' THEN 1
+            ELSE 2
+        END AS attack_class_label
+    FROM "dev"."b_transform"."drdos_ids_transformed"
+    UNION ALL 
+    SELECT 
+        0 AS cnx_duration
+        ,protocol AS protocol_type
+        ,traffic_type AS service
+        ,'No_state' AS tcp_connection_state
+        ,0 AS source_num_bytes
+        ,0 AS destination_num_bytes
+        ,source_ip_address
+        ,destination_ip_address
+        ,source_port
+        ,destination_port
+        ,attack_type AS attack_class_name
+        ,CASE 
+            WHEN attack_type='DDOS' THEN 1
+            WHEN attack_type='Intrusion' THEN 2
+            WHEN attack_type='Malware' THEN 3
+            ELSE 0
+        END AS attack_class_label
+    FROM "dev"."b_transform"."cyber_attacks_transformed2"
+)

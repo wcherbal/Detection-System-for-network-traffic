@@ -1,0 +1,9 @@
+unload ('select * from "dev"."c_Dashboard"."ids_final_dataset"')
+to 's3://ids-sw-project/final_dataset/dataset_final' 
+iam_role 'arn:aws:iam::145023121246:role/redshift_ids_role'
+CSV DELIMITER AS ','
+manifest 
+allowoverwrite
+parallel off 
+EXTENSION 'csv'
+HEADER;

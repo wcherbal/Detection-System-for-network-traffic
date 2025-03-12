@@ -1,0 +1,305 @@
+/*
+-- rename columns/features --done
+-- remove duplicates --done
+--replace null values 
+-- check data types --done
+-- encoding categorical variables attacks ,etctc
+--choose relevant features and add it to transformed table 
+-- View table content 
+
+SELECT * FROM "nsl-kdd-99" limit 10;
+
+--Rename table columns with relevant and significant column names 
+ALTER table "nsl-kdd-99" 
+RENAME column target_classification to attack_label;
+
+---Look for empty columns in table 
+SELECT column_name, COUNT(*) AS null_count
+FROM information_schema.columns
+WHERE table_name = 'nsl-kdd-99'
+AND column_name IS NULL
+GROUP BY column_name;*/
+
+--- supprimer les doubles de la table NSL KDD 99
+
+--Add row_num column that computes number of duplicates in dataset 
+WITH duplicates AS (
+    SELECT *, 
+        ROW_NUMBER() OVER (PARTITION BY duration, protocol_type, service, tcp_connection_state, source_num_bytes, destination_num_bytes,num_failed_logins, user_logged_in, attack_label, attack_level
+            ORDER BY duration ) AS row_num
+    FROM "dev"."public"."nsl-kdd-99"
+), 
+--- Delete duplicates from table 
+
+drop_duplicates AS(
+    SELECT * 
+    FROM duplicates
+    where row_num >1
+), 
+
+---Create table with choosen features and replace null values by 0, or description
+nsl_kdd_staging_tableAS (
+    SELECT 
+        COALESCE(duration, 0) AS duration
+        ,COALESCE(protocol_type, 'no-protocol') AS protocol_type
+        ,COALESCE(service, 'no-service') AS service
+        ,COALESCE(tcp_connection_state, 'tcp') AS tcp_connection_state
+        ,COALESCE(source_num_bytes,0) AS source_num_bytes
+        ,COALESCE(destination_num_bytes,0) AS destination_num_bytes
+        ,COALESCE(land_attack,0) AS land_attack
+        ,COALESCE(wrong_fragment,0) AS wrong_fragment
+        ,COALESCE(urgent_paquet,0) AS urgent_paquet
+        ,COALESCE(connection_hot,0) AS connection_hot
+        ,COALESCE(num_failed_logins,0) AS num_failed_logins
+        ,COALESCE(user_logged_in,0) AS user_logged_in
+        ,COALESCE(num_compromised_connection,0) AS num_compromised_connection
+        ,COALESCE(root_shell,0) AS root_shell
+        ,COALESCE(root_su_attempted,0) AS root_su_attempted
+        ,COALESCE(root_num_commands_attempted,0) AS root_num_commands_attempted
+        ,COALESCE(num_created_files,0) AS num_created_files
+        ,COALESCE(num_opened_shells,0) AS num_opened_shells
+        ,COALESCE(attack_label, 'not-defined') AS attack_label
+        ,COALESCE(attack_level,0) AS attack_level
+    FROM drop_duplicates
+),
+----Standardisation/ normalization of numerical continuous columns like src_bytes and destination_bytes 
+
+standardisation AS(
+    SELECT
+        AVG(source_num_bytes) AS mean_src
+        ,STDDEV(source_num_bytes) AS std_src
+    FROM drop_nulls
+), 
+
+standardisation2 AS(
+    SELECT
+        AVG(destination_num_bytes) AS mean_dst
+        ,STDDEV(destination_num_bytes) AS std_dst
+    FROM drop_nulls
+
+)
+
+---2- Create staging table 
+--SELECT * INTO nsl_kdd_staging_table FROM drop_nulls
+
+---3- Update columns inside staging table 
+
+
+-- Remplacer les valeurs dans la table principale + standardisation
+---protocol_type
+UPDATE nsl_kdd_staging_table SET protocol_type=1 WHERE protocol_type='udp';
+UPDATE nsl_kdd_staging_table SET protocol_type=2 WHERE protocol_type='tcp';
+UPDATE nsl_kdd_staging_table SET protocol_type=3 WHERE protocol_type='icmp';
+
+
+UPDATE nsl_kdd_staging_table
+SET source_num_bytes = (source_num_bytes - (SELECT mean_src FROM standardisation)) / (SELECT std_src FROM standardisation);
+
+UPDATE nsl_kdd_staging_table
+SET destination_num_bytes = (destination_num_bytes - (SELECT mean_dst FROM standardisation2)) / (SELECT std_dst FROM standardisation2);
+
+
+SELECT * INTO "dev"."b_transform". "nsl_kdd_transformed" FROM nsl_kdd_staging_table
+
+----Create new table unsw-15 training and testing
+
+CREATE TABLE dev.b_transform.UNSW_15_transformed AS (
+    SELECT * FROM "public"."unsw-trainig-set"
+    UNION ALL 
+    SELECT * FROM "public"."unsw-testing-set"
+)
+
+
+------ Create transformed table of cyber attacks with renamed columns 
+SELECT * INTO TABLE "dev"."b_transform"."cyber_attacks_transformed2" FROM "cyber-attacks"
+
+---- create table from decimals with normal and attack traffic and renamed columns
+
+---Attacks on network : approach for IDS against DOS, spoofing , DDOS  and dataset of benign traffic 
+--dataset about internet of vehicles, it is related to attacks on car network and connectivity 
+---Sample data was released from cas study on ford cars about attacks like spoofing, DOS and DDOS 
+--Create union table of all data to be used in training ML model using decimal presentation of data
+
+CREATE TABLE "dev"."b_transform"."CIC_UNB_IOV_transformed" AS (
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-benign"
+    UNION DISTINCT
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-ddos"
+    UNION DISTINCT
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-dos"
+    UNION DISTINCT
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-spoofing-gas"
+    UNION DISTINCT
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-spoofing-rpm"
+    UNION DISTINCT
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-spoofing-speed"
+    UNION DISTINCT
+    SELECT 
+        id AS priority_id --indicates Controller Area Network (CAN) bus communication message received with priority DESC , the lower the id is , the more the message is important and prior
+        ,data_0 AS data_payload_byte0 --data 0 to 7 bytes of payloads 
+        ,data_1 AS data_payload_byte1
+        ,data_2 AS data_payload_byte2
+        ,data_3 AS data_payload_byte3
+        ,data_4 AS data_payload_byte4
+        ,data_5 AS data_payload_byte5
+        ,data_6 AS data_payload_byte6
+        ,data_7 AS data_payload_byte7
+        ,label AS  attack_class --attack/benign
+        ,category AS attack_categroy
+        ,specific_class AS specific_attack_class
+    FROM "dev"."public"."decimal-sppofing-steering"
+)
+
+-----Create drdos table of dos , ntp, ssdp attacks on traffic 
+
+CREATE TABLE "dev"."b_transform"."drdos_IDS_transformed" AS(
+    SELECT 
+        "unnamed: 0" AS request_id
+        ,"flow id" AS flow_request_id
+        ,"source ip" AS source_ip_address
+        ,"source port" AS source_port
+        ,"destination ip" AS destination_ip_address
+        ,protocol AS protocol_type
+        ,timestamp AS time_stamp
+        ,"flow duration" AS flow_duration
+        ,"total fwd packets" AS total_forwarded_packets
+        ,"total length of fwd packets" AS total_len_fwd_packets
+        ,"total length of bwd packets" AS total_len_bwd_packets
+        ,"fwd packet length max" AS fwd_packet_len_max
+        ,"fwd packet length min" AS fwd_packet_len_min
+        ,"bwd packet length max" AS bwd_packet_len_max
+        ,"bwd packet length min" AS bwd_packet_len_min
+        ,"label" AS attack_class
+    FROM "dev"."public"."drdos-ntp"
+    UNION DISTINCT 
+    SELECT 
+        "unnamed: 0" AS request_id
+        ,"flow id" AS flow_request_id
+        ,"source ip" AS source_ip_address
+        ,"source port" AS source_port
+        ,"destination ip" AS destination_ip_address
+        ,protocol AS protocol_type
+        ,timestamp AS time_stamp
+        ,"flow duration" AS flow_duration
+        ,"total fwd packets" AS total_forwarded_packets
+        ,"total length of fwd packets" AS total_len_fwd_packets
+        ,"total length of bwd packets" AS total_len_bwd_packets
+        ,"fwd packet length max" AS fwd_packet_len_max
+        ,"fwd packet length min" AS fwd_packet_len_min
+        ,"bwd packet length max" AS bwd_packet_len_max
+        ,"bwd packet length min" AS bwd_packet_len_min
+        ,"label" AS attack_class
+    FROM "dev"."public"."drdos-netbios"
+    UNION DISTINCT
+    SELECT 
+        "unnamed: 0" AS request_id
+        ,"flow id" AS flow_request_id
+        ,"source ip" AS source_ip_address
+        ,"source port" AS source_port
+        ,"destination ip" AS destination_ip_address
+        ,protocol AS protocol_type
+        ,timestamp AS time_stamp
+        ,"flow duration" AS flow_duration
+        ,"total fwd packets" AS total_forwarded_packets
+        ,"total length of fwd packets" AS total_len_fwd_packets
+        ,"total length of bwd packets" AS total_len_bwd_packets
+        ,"fwd packet length max" AS fwd_packet_len_max
+        ,"fwd packet length min" AS fwd_packet_len_min
+        ,"bwd packet length max" AS bwd_packet_len_max
+        ,"bwd packet length min" AS bwd_packet_len_min
+        ,"label" AS attack_class
+    FROM "dev"."public"."drdos-ssdp"
+)
+    
+    
+---CREATE TABLE of network traffic attacks binary classification bad/good packet 
+
+CREATE TABLE "dev"."b_transform"."network_traffic_attacks_transformed" AS(
+    SELECT 
+        time AS duration
+        ,source AS source_ip_address
+        ,destination AS destination_ip_address
+        ,protocol AS protocol_type
+        ,length AS request_length
+        ,COALESCE("source port", 0.0) AS source_port
+        ,COALESCE("destination port",0.0) AS destination_port
+        ,bad_packet AS attack_class ---1:bad ,0:normal traffic
+    FROM "dev"."public"."network-traffic-attacks"
+)
